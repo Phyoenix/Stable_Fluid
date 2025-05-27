@@ -336,7 +336,7 @@ struct SmokeSim : DisableCopy {
 };
 
 int main() {
-    unsigned int n = 128;
+    unsigned int n = 256;
     SmokeSim sim(n);
 
     {
@@ -402,7 +402,7 @@ int main() {
             VDBWriter writer;
             writer.addGrid<float, 1>("density", cpuClr.data(), n, n, n);
             writer.addGrid<float, 1>("temperature", cpuTmp.data(), n, n, n);
-            writer.write("/tmp/a" + std::to_string(1000 + frame).substr(1) + ".vdb");
+            writer.write("smoke" + std::to_string(1000 + frame).substr(1) + ".vdb");
         }));
 
         printf("frame=%d, loss=%f\n", frame, sim.calc_loss());
