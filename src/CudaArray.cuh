@@ -9,6 +9,7 @@ struct DisableCopy {
     DisableCopy &operator=(DisableCopy const &) = delete;
 };
 
+// surface object
 template <class T>
 struct CudaArray : DisableCopy {
     cudaArray *m_cuArray{};
@@ -51,7 +52,7 @@ struct CudaArray : DisableCopy {
 template <class T>
 struct CudaSurfaceAccessor {
     cudaSurfaceObject_t m_cuSuf;
-
+    // trap/clamp/zero https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#device-memory
     template <cudaSurfaceBoundaryMode mode = cudaBoundaryModeTrap>
     __device__ __forceinline__ T read(int x, int y, int z) const {
         return surf3Dread<T>(m_cuSuf, x * sizeof(T), y, z, mode);
@@ -72,6 +73,7 @@ struct CudaSurface : CudaArray<T> {
         cudaResourceDesc resDesc{};
         resDesc.resType = cudaResourceTypeArray;
 
+        // CudaArray<T>:: must be added, the compiler can not judge if CudaArray<T>::getArray() is a static method or not.
         resDesc.res.array.array = CudaArray<T>::getArray();
         checkCudaErrors(cudaCreateSurfaceObject(&m_cuSuf, &resDesc));
     }
@@ -89,6 +91,7 @@ struct CudaSurface : CudaArray<T> {
     }
 };
 
+// texture object
 template <class T>
 struct CudaTextureAccessor {
     cudaTextureObject_t m_cuTex;
@@ -101,9 +104,9 @@ struct CudaTextureAccessor {
 template <class T>
 struct CudaTexture : CudaSurface<T> {
     struct Parameters {
-        cudaTextureAddressMode addressMode{cudaAddressModeClamp};
-        cudaTextureFilterMode filterMode{cudaFilterModeLinear};
-        cudaTextureReadMode readMode{cudaReadModeElementType};
+        cudaTextureAddressMode addressMode{cudaAddressModeClamp}; // clamp/ border/ mirror/ wrap
+        cudaTextureFilterMode filterMode{cudaFilterModeLinear}; // or cudaFilterModePoint (sample nearest)
+        cudaTextureReadMode readMode{cudaReadModeElementType}; 
         bool normalizedCoords{false};
     };
 

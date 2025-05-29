@@ -21,10 +21,11 @@ __global__ void advect_kernel(CudaTextureAccessor<float4> texVel, CudaSurfaceAcc
 
     float3 loc = make_float3(x + 0.5f, y + 0.5f, z + 0.5f);
     if (sufBound.read(x, y, z) >= 0) {
-        float3 vel1 = sample(texVel, loc);
-        float3 vel2 = sample(texVel, loc - 0.5f * vel1);
-        float3 vel3 = sample(texVel, loc - 0.75f * vel2);
-        loc -= (2.f / 9.f) * vel1 + (1.f / 3.f) * vel2 + (4.f / 9.f) * vel3;
+        float3 k1 = sample(texVel, loc);
+        float3 k2 = sample(texVel, loc - 0.5f * k1);
+        float3 k3 = sample(texVel, loc - 0.5f * k2);
+        float3 k4 = sample(texVel, loc - k3);
+        loc -= (k1 + 2.f * k2 + 2.f * k3 + k4) / 6.f;
     }
     sufLoc.write(make_float4(loc.x, loc.y, loc.z, 0.f), x, y, z);
 }
@@ -336,7 +337,7 @@ struct SmokeSim : DisableCopy {
 };
 
 int main() {
-    unsigned int n = 256;
+    unsigned int n = 128;
     SmokeSim sim(n);
 
     {
