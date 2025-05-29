@@ -91,10 +91,10 @@ __global__ void sumloss_kernel(CudaSurfaceAccessor<float> sufDiv, float *sum, un
     atomicAdd(sum, div * div);
 }
 
-/*__global__ void jacobi_kernel(CudaSurfaceAccessor<float> sufDiv, CudaSurfaceAccessor<float> sufPre, CudaSurfaceAccessor<float> sufPreNext, CudaSurfaceAccessor<char> sufBound, unsigned int n) {
-    unsigned int x = threadIdx.x + blockDim.x * blockIdx.x;
-    unsigned int y = threadIdx.y + blockDim.y * blockIdx.y;
-    unsigned int z = threadIdx.z + blockDim.z * blockIdx.z;
+__global__ void jacobi_kernel(CudaSurfaceAccessor<float> sufDiv, CudaSurfaceAccessor<float> sufPre, CudaSurfaceAccessor<float> sufPreNext, CudaSurfaceAccessor<char> sufBound, unsigned int n) {
+    int x = threadIdx.x + blockDim.x * blockIdx.x;
+    int y = threadIdx.y + blockDim.y * blockIdx.y;
+    int z = threadIdx.z + blockDim.z * blockIdx.z;
     if (x >= n || y >= n || z >= n) return;
     if (sufBound.read(x, y, z) < 0) return;
 
@@ -107,7 +107,7 @@ __global__ void sumloss_kernel(CudaSurfaceAccessor<float> sufDiv, float *sum, un
     float div = sufDiv.read(x, y, z);
     float preNext = (pxp + pxn + pyp + pyn + pzp + pzn - div) * (1.f / 6.f);
     sufPreNext.write(preNext, x, y, z);
-}*/
+}
 
 __global__ void subgradient_kernel(CudaSurfaceAccessor<float> sufPre, CudaSurfaceAccessor<float4> sufVel, CudaSurfaceAccessor<char> sufBound, unsigned int n) {
     int x = threadIdx.x + blockDim.x * blockIdx.x;
@@ -287,7 +287,20 @@ struct SmokeSim : DisableCopy {
 
     void projection() {
         divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
-        vcycle(0, pre.get(), div.get());
+        /*
+        for (int i = 0; i < 5; ++i) {
+            vcycle(0, pre.get(), div.get());
+            float res = calc_residual();
+            printf("  vcycle %d, residual = %e\n", i, res);
+        }
+        */
+        for (int i = 0; i < 50; ++i) {
+           vcycle(0, pre.get(), div.get());
+           if (i % 5 == 0 || i == 50 - 1) {
+               float res = calc_residual();
+               printf("  vcycle %d, residual = %e\n", i, res);
+           }
+       }
         subgradient_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), vel->accessSurface(), bound->accessSurface(), n);
     }
 
@@ -307,12 +320,43 @@ struct SmokeSim : DisableCopy {
 
     void step(int times = 16) {
         for (int step = 0; step < times; step++) {
-            //old_projection();
             projection();
+            // rbgs_projection();
+            // jacobi_projection();
             advection();
         }
     }
 
+    void rbgs_projection(int times = 50) {
+       divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
+       fillzero_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), n);
+
+       for (int i = 0; i < times; ++i) {
+           smooth(pre.get(), div.get(), 0, 1);
+           if (i % 5 == 0 || i == times - 1) {
+               float res = calc_residual();
+               printf("  rbgs %d, residual = %e\n", i, res);
+           }
+       }
+       subgradient_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), vel->accessSurface(), bound->accessSurface(), n);
+    }
+
+    void jacobi_projection(int times = 50) {
+       divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
+       auto preNext = std::make_unique<CudaSurface<float>>(uint3{n, n, n});
+       fillzero_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), n);
+
+       for (int i = 0; i < times; ++i) {
+           jacobi_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(
+               div->accessSurface(), pre->accessSurface(), preNext->accessSurface(), bound->accessSurface(), n);
+           std::swap(pre, preNext);
+           if (i % 5 == 0 || i == times - 1) {
+               float res = calc_residual();
+               printf("  jacobi %d, residual = %e\n", i, res);
+           }
+       }
+       subgradient_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), vel->accessSurface(), bound->accessSurface(), n);
+    }   
     /*void old_projection(int times = 50) {
         divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
 
@@ -329,6 +373,18 @@ struct SmokeSim : DisableCopy {
         float *sum;
         checkCudaErrors(cudaMalloc(&sum, sizeof(float)));
         sumloss_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(div->accessSurface(), sum, n);
+        float cpu;
+        checkCudaErrors(cudaMemcpy(&cpu, sum, sizeof(float), cudaMemcpyDeviceToHost));
+        checkCudaErrors(cudaFree(sum));
+        return cpu;
+    }
+
+    float calc_residual() {
+        // residual compute r = A(pre) - div
+        residual_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(res[0]->accessSurface(), pre->accessSurface(), div->accessSurface(), n);
+        float *sum;
+        checkCudaErrors(cudaMalloc(&sum, sizeof(float)));
+        sumloss_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(res[0]->accessSurface(), sum, n);
         float cpu;
         checkCudaErrors(cudaMemcpy(&cpu, sum, sizeof(float), cudaMemcpyDeviceToHost));
         checkCudaErrors(cudaFree(sum));
