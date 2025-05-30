@@ -7,6 +7,7 @@
 #include "ticktock.h"
 #include "writevdb.h"
 #include <thread>
+#include <fstream>
 
 __global__ void advect_kernel(CudaTextureAccessor<float4> texVel, CudaSurfaceAccessor<float4> sufLoc, CudaSurfaceAccessor<char> sufBound, unsigned int n) {
     int x = threadIdx.x + blockDim.x * blockIdx.x;
@@ -287,20 +288,16 @@ struct SmokeSim : DisableCopy {
 
     void projection() {
         divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
+        vcycle(0, pre.get(), div.get());
         /*
-        for (int i = 0; i < 5; ++i) {
-            vcycle(0, pre.get(), div.get());
-            float res = calc_residual();
-            printf("  vcycle %d, residual = %e\n", i, res);
-        }
-        */
         for (int i = 0; i < 50; ++i) {
            vcycle(0, pre.get(), div.get());
            if (i % 5 == 0 || i == 50 - 1) {
                float res = calc_residual();
                printf("  vcycle %d, residual = %e\n", i, res);
            }
-       }
+        }
+        */
         subgradient_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), vel->accessSurface(), bound->accessSurface(), n);
     }
 
@@ -357,16 +354,7 @@ struct SmokeSim : DisableCopy {
        }
        subgradient_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), vel->accessSurface(), bound->accessSurface(), n);
     }   
-    /*void old_projection(int times = 50) {
-        divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
 
-        for (int step = 0; step < times; step++) {
-            jacobi_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(div->accessSurface(), pre->accessSurface(), preNext->accessSurface(), bound->accessSurface(), n);
-            std::swap(pre, preNext);
-        }
-
-        subgradient_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(pre->accessSurface(), vel->accessSurface(), bound->accessSurface(), n);
-    }*/
 
     float calc_loss() {
         divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
@@ -392,22 +380,34 @@ struct SmokeSim : DisableCopy {
     }
 };
 
+void write_vtk_scalar(const std::string& filename, const float* data, int n, const char* name = "density") {
+    std::ofstream fout(filename);
+    fout << "# vtk DataFile Version 3.0\n";
+    fout << name << "\nASCII\nDATASET STRUCTURED_POINTS\n";
+    fout << "DIMENSIONS " << n << " " << n << " " << n << "\n";
+    fout << "ORIGIN 0 0 0\nSPACING 1 1 1\n";
+    fout << "POINT_DATA " << n*n*n << "\n";
+    fout << "SCALARS " << name << " float 1\nLOOKUP_TABLE default\n";
+    for (int i = 0; i < n*n*n; ++i) fout << data[i] << "\n";
+    fout.close();
+}
+
 int main() {
     unsigned int n = 128;
     SmokeSim sim(n);
 
     {
-        std::vector<char> cpu(n * n * n);
-        for (int z = 0; z < n; z++) {
-            for (int y = 0; y < n; y++) {
-                for (int x = 0; x < n; x++) {
-                    char sdf1 = std::hypot(x - (int)n / 2, y - (int)n / 2, z - (int)n / 4) < n / 12 ? -1 : 1;
-                    char sdf2 = std::hypot(x - (int)n / 2, y - (int)n / 2, z - (int)n * 3 / 4) < n / 6 ? -1 : 1;
-                    cpu[x + n * (y + n * z)] = std::min(sdf1, sdf2);
-                }
-            }
-        }
-        sim.bound->copyIn(cpu.data());
+       std::vector<char> cpu(n * n * n);
+       for (int z = 0; z < n; z++) {
+           for (int y = 0; y < n; y++) {
+               for (int x = 0; x < n; x++) {
+                   char sdf1 = std::hypot(x - (int)n / 2, y - (int)n / 2, z - (int)n / 4) < n / 12 ? -1 : 1;
+                   char sdf2 = std::hypot(x - (int)n / 2, y - (int)n / 2, z - (int)n * 3 / 4) < n / 6 ? -1 : 1;
+                   cpu[x + n * (y + n * z)] = std::min(sdf1, sdf2); // 恢复为两个球体的并集
+               }
+           }
+       }
+       sim.bound->copyIn(cpu.data());
     }
 
     {
@@ -442,7 +442,7 @@ int main() {
             for (int y = 0; y < n; y++) {
                 for (int x = 0; x < n; x++) {
                     float vel = std::hypot(x - (int)n / 2, y - (int)n / 2, z - (int)n / 4) < n / 12 ? 0.9f : 0.f;
-                    cpu[x + n * (y + n * z)] = make_float4(0.f, 0.f, vel, 0.f);
+                    cpu[x + n * (y + n * z)] = make_float4(0.f, 0.f, vel * 0.1f, 0.f);
                 }
             }
         }
@@ -456,10 +456,15 @@ int main() {
         sim.clr->copyOut(cpuClr.data());
         sim.tmp->copyOut(cpuTmp.data());
         tpool.push_back(std::thread([cpuClr = std::move(cpuClr), cpuTmp = std::move(cpuTmp), frame, n] {
+            // VDB 导出
             VDBWriter writer;
             writer.addGrid<float, 1>("density", cpuClr.data(), n, n, n);
             writer.addGrid<float, 1>("temperature", cpuTmp.data(), n, n, n);
             writer.write("smoke" + std::to_string(1000 + frame).substr(1) + ".vdb");
+
+            // VTK 导出
+            write_vtk_scalar("smoke_density_" + std::to_string(frame) + ".vtk", cpuClr.data(), n, "density");
+            write_vtk_scalar("smoke_temperature_" + std::to_string(frame) + ".vtk", cpuTmp.data(), n, "temperature");
         }));
 
         printf("frame=%d, loss=%f\n", frame, sim.calc_loss());
