@@ -31,3 +31,16 @@ This means choose `vcycle` method, the grid size is `128x128x128`, and `16` time
 - times: `16` is preferred for the trade-off between visual effects and output file size
 
 The output file is formatted as `.vdb` and `.vtk`. You can find it under the same directory as `main`. Since this project is only built for simulating not rendering, so you should using other DCC tools like `Houdini` or some nice renderers like `Mitsuba` to render the `.vdb` or `.vtk` results.
+
+## Profiling
+
+You can also take a step further for testing different iteration method and grid_size using profiling tools. For example we can generate the `.nsys-rep` file for `Nsight System` by simply lauching the program with:
+
+```
+nsys profile --stats=true ./main
+```
+And open the `.nsys-rep` file with `Nsight System` to analyze the potential bottleneck like communication overhead between `CPU` and `GPU`.
+
+![alt text](./snapshot/NsightSystem.png)
+
+For the further details analysis within single kernel function, we can simply use the `Nsight Compute` to profile the detail kernel performance.
