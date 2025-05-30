@@ -8,6 +8,9 @@
 #include "writevdb.h"
 #include <thread>
 #include <fstream>
+#include <string>
+#include <cstdlib>
+#include <iostream>
 
 __global__ void advect_kernel(CudaTextureAccessor<float4> texVel, CudaSurfaceAccessor<float4> sufLoc, CudaSurfaceAccessor<char> sufBound, unsigned int n) {
     int x = threadIdx.x + blockDim.x * blockIdx.x;
@@ -288,7 +291,12 @@ struct SmokeSim : DisableCopy {
 
     void projection() {
         divergence_kernel<<<dim3((n + 7) / 8, (n + 7) / 8, (n + 7) / 8), dim3(8, 8, 8)>>>(vel->accessSurface(), div->accessSurface(), bound->accessSurface(), n);
-        vcycle(0, pre.get(), div.get());
+        // vcycle(0, pre.get(), div.get());
+        for (int i = 0; i < 4; ++i) {
+            vcycle(0, pre.get(), div.get());
+            float res = calc_residual();
+            printf(" vcycle %d, residual = %e\n", i, res);
+        }
         /*
         for (int i = 0; i < 50; ++i) {
            vcycle(0, pre.get(), div.get());
@@ -392,8 +400,18 @@ void write_vtk_scalar(const std::string& filename, const float* data, int n, con
     fout.close();
 }
 
-int main() {
+int main(int argc, char** argv) {
+
+    std::string proj_method = "vcycle";
     unsigned int n = 128;
+    int step_times = 16;
+
+    if (argc > 1) proj_method = argv[1];
+    if (argc > 2) n = std::atoi(argv[2]);
+    if (argc > 3) step_times = std::atoi(argv[3]);
+
+    printf("Projection: %s, Grid: %u, Step times: %d\n", proj_method.c_str(), n, step_times);
+
     SmokeSim sim(n);
 
     {
@@ -456,19 +474,29 @@ int main() {
         sim.clr->copyOut(cpuClr.data());
         sim.tmp->copyOut(cpuTmp.data());
         tpool.push_back(std::thread([cpuClr = std::move(cpuClr), cpuTmp = std::move(cpuTmp), frame, n] {
-            // VDB 导出
             VDBWriter writer;
             writer.addGrid<float, 1>("density", cpuClr.data(), n, n, n);
             writer.addGrid<float, 1>("temperature", cpuTmp.data(), n, n, n);
             writer.write("smoke" + std::to_string(1000 + frame).substr(1) + ".vdb");
 
-            // VTK 导出
             write_vtk_scalar("smoke_density_" + std::to_string(frame) + ".vtk", cpuClr.data(), n, "density");
             write_vtk_scalar("smoke_temperature_" + std::to_string(frame) + ".vtk", cpuTmp.data(), n, "temperature");
         }));
 
         printf("frame=%d, loss=%f\n", frame, sim.calc_loss());
-        sim.step();
+
+        if (proj_method == "vcycle") {
+            sim.step(step_times);
+        } else if (proj_method == "rbgs") {
+            for (int i = 0; i < step_times; ++i) sim.rbgs_projection();
+            sim.advection();
+        } else if (proj_method == "jacobi") {
+            for (int i = 0; i < step_times; ++i) sim.jacobi_projection();
+            sim.advection();
+        } else {
+            printf("Unknown projection method: %s\n", proj_method.c_str());
+            break;
+        }
     }
 
     for (auto &t: tpool) t.join();
