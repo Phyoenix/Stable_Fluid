@@ -1,6 +1,6 @@
 add_executable(main
     main.cu
-    writevdb.cpp
+    vdbExporter.cpp
 )
 
 set_source_files_properties(main.cu PROPERTIES LANGUAGE CUDA)

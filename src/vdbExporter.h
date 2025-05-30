@@ -5,13 +5,13 @@
 #include <vector>
 #include <memory>
 
-class VDBWriter {
+class VDBExporter {
     struct Impl;
     std::unique_ptr<Impl> const impl;
 
     template <class T, size_t N>
     struct AddGridImpl {
-        VDBWriter *that;
+        VDBExporter *that;
         std::string name;
         void const *base;
         uint32_t sizex, sizey, sizez;
@@ -22,13 +22,13 @@ class VDBWriter {
     };
 
 public:
-    VDBWriter();
-    ~VDBWriter();
+    VDBExporter();
+    ~VDBExporter();
 
-    VDBWriter(VDBWriter const &) = delete;
-    VDBWriter &operator=(VDBWriter const &) = delete;
-    VDBWriter(VDBWriter &&) = delete;
-    VDBWriter &operator=(VDBWriter &&) = delete;
+    VDBExporter(VDBExporter const &) = delete;
+    VDBExporter &operator=(VDBExporter const &) = delete;
+    VDBExporter(VDBExporter &&) = delete;
+    VDBExporter &operator=(VDBExporter &&) = delete;
 
     template <class T, size_t N, bool normalizedCoords = true>
     void addGrid(std::string const &name, void const *base, uint32_t sizex, uint32_t sizey, uint32_t sizez, uint32_t pitchx = 0, uint32_t pitchy = 0, uint32_t pitchz = 0) {
@@ -48,16 +48,16 @@ public:
 #include <openvdb/openvdb.h>
 #include <openvdb/tools/Dense.h>
 
-struct VDBWriter::Impl {
+struct VDBExporter::Impl {
     openvdb::GridPtrVec grids;
 };
 
-VDBWriter::VDBWriter() : impl(std::make_unique<Impl>()) {
+VDBExporter::VDBExporter() : impl(std::make_unique<Impl>()) {
 }
 
-VDBWriter::~VDBWriter() = default;
+VDBExporter::~VDBExporter() = default;
 
-void VDBWriter::write(std::string const &path) {
+void VDBExporter::write(std::string const &path) {
     openvdb::io::File(path).write(impl->grids);
 }
 
@@ -86,7 +86,7 @@ VecT help_make_vec(T const *ptr, std::index_sequence<Is...>) {
 }
 
 template <class T, size_t N>
-void VDBWriter::AddGridImpl<T, N>::operator()() const {
+void VDBExporter::AddGridImpl<T, N>::operator()() const {
     using GridT = typename vdbtraits<T, N>::type;
 
     openvdb::tools::Dense<typename GridT::ValueType> dens(openvdb::Coord(sizex, sizey, sizez), openvdb::Coord(minx, miny, minz));
@@ -108,6 +108,6 @@ void VDBWriter::AddGridImpl<T, N>::operator()() const {
     that->impl->grids.push_back(grid);
 }
 
-template struct VDBWriter::AddGridImpl<float, 1>;
-template struct VDBWriter::AddGridImpl<float, 3>;
+template struct VDBExporter::AddGridImpl<float, 1>;
+template struct VDBExporter::AddGridImpl<float, 3>;
 #endif
