@@ -12,6 +12,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
 )
 
+list(APPEND CMAKE_MODULE_PATH "/usr/local/lib/cmake/OpenVDB")
 find_package(OpenVDB REQUIRED)
 message(STATUS "Found OpenVDB ${OpenVDB_VERSION} at ${OpenVDB_LIBRARIES}")
 
